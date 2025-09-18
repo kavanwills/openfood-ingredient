@@ -39,22 +39,17 @@ if [ ! -s "$CSV" ]; then
 fi
 
 # Require csvkit tools (csvkit <1.0.5 recommended)
-for cmd in csvcut csvgrep csvformat; do
+for cmd in in2csv csvcut csvgrep csvformat; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: $cmd not found. Please install csvkit (<1.0.5)." >&2; exit 1; }
-done
+endone
 
-# Detect delimiter from the header (tab → use -t, else assume comma)
-header="$(head -n1 "$CSV" | tr -d '\r' || true)"
-CSV_DOPT=""
-case "$header" in
-  *$'\t'*) CSV_DOPT="-t" ;;   # TSV
-  *) CSV_DOPT="" ;;           # CSV (default)
-esac
+# Normalize line endings and let in2csv sniff the delimiter; then get the parsed header
+parsed_header="$(tr -d '\r' < "$CSV" | in2csv | head -n1 || true)"
 
-# Check required columns exist (string check is fine for both CSV/TSV)
+# Check required columns exist after parsing
 missing=0
 for col in ingredients_text product_name code; do
-  case "$header" in *"$col"*) : ;; *) missing=1 ;; esac
+  case "$parsed_header" in *"$col"*) : ;; *) missing=1 ;; esac
 done
 if [ $missing -eq 1 ]; then
   echo "WARNING: Missing required column(s)." >&2
@@ -63,13 +58,20 @@ if [ $missing -eq 1 ]; then
   exit 0
 fi
 
-# Core pipeline: parse with detected delimiter; always output TSV; add placeholders
+# Core pipeline:
+# - tr -d '\r' : strip CRs
+# - in2csv      : auto-detect delimiter → canonical CSV
+# - csvcut/grep : select & filter
+# - csvformat -T: output as TSV
+# - tail -n +2  : drop header row
+# - while ...   : fill placeholders
 tmp_matches="$(mktemp)"
 set +e
 tr -d '\r' < "$CSV" \
-| csvcut   $CSV_DOPT -c ingredients_text,product_name,code \
-| csvgrep  $CSV_DOPT -c ingredients_text -r "(?i)${INGREDIENT}" \
-| csvcut   $CSV_DOPT -c product_name,code \
+| in2csv \
+| csvcut   -c ingredients_text,product_name,code \
+| csvgrep  -c ingredients_text -r "(?i)${INGREDIENT}" \
+| csvcut   -c product_name,code \
 | csvformat -T \
 | tail -n +2 \
 | while IFS=$'\t' read -r name code; do
