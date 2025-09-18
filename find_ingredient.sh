@@ -45,18 +45,43 @@ done
 
 # Check required columns exist from header (normalize CR)
 header="$(head -n1 "$CSV" | tr -d '\r' || true)"
-missing=""
+missing=0
 for col in ingredients_text product_name code; do
-  case "$header" in *"$col"*) : ;; *) missing="$missing $col" ;; esac
+  case "$header" in *"$col"*) : ;; *) missing=1 ;; esac
 done
-if [ -n "$missing" ]; then
-  echo "WARNING: Missing required column(s):$missing" >&2
+if [ $missing -eq 1 ]; then
+  echo "WARNING: Missing required column(s)." >&2
   echo "----"
   echo "Found 0 product(s) containing: \"${INGREDIENT}\""
   exit 0
 fi
 
-# Core pipeline (TSV throughout); add placeholders for missing name/code
+# Core pipeline (TSV throughout); add placeholders using pure Bash
 tmp_matches="$(mktemp)"
 set +e
-tr
+tr -d '\r' < "$CSV" \
+| csvcut   -t -c ingredients_text,product_name,code \
+| csvgrep  -t -c ingredients_text -r "(?i)${INGREDIENT}" \
+| csvcut   -t -c product_name,code \
+| csvformat -T \
+| tail -n +2 \
+| while IFS=$'\t' read -r name code; do
+    [ -z "$name" ] && name="<missing_name>"
+    [ -z "$code" ] && code="<missing_code>"
+    printf "%s\t%s\n" "$name" "$code"
+  done \
+| tee "$tmp_matches"
+status=$?
+set -e
+
+if [ $status -ne 0 ]; then
+  echo "ERROR: Filtering pipeline failed." >&2
+  rm -f "$tmp_matches"
+  exit $status
+fi
+
+count="$(wc -l < "$tmp_matches" | tr -d '[:space:]')"
+echo "----"
+echo "Found ${count} product(s) containing: \"${INGREDIENT}\""
+
+rm -f "$tmp_matches"
