@@ -41,9 +41,9 @@ fi
 # Require csvkit tools (csvkit <1.0.5 recommended)
 for cmd in in2csv csvcut csvgrep csvformat; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: $cmd not found. Please install csvkit (<1.0.5)." >&2; exit 1; }
-endone
+done
 
-# Normalize line endings and let in2csv sniff the delimiter; then get the parsed header
+# Normalize and inspect parsed header (in2csv auto-detects delimiter)
 parsed_header="$(tr -d '\r' < "$CSV" | in2csv | head -n1 || true)"
 
 # Check required columns exist after parsing
@@ -59,12 +59,12 @@ if [ $missing -eq 1 ]; then
 fi
 
 # Core pipeline:
-# - tr -d '\r' : strip CRs
-# - in2csv      : auto-detect delimiter → canonical CSV
-# - csvcut/grep : select & filter
-# - csvformat -T: output as TSV
-# - tail -n +2  : drop header row
-# - while ...   : fill placeholders
+# tr -d '\r'  -> strip CRs
+# in2csv      -> canonical CSV (auto-delimiter)
+# csvcut/grep -> select/filter
+# csvformat -T -> TSV output
+# tail -n +2  -> drop header
+# while       -> fill placeholders
 tmp_matches="$(mktemp)"
 set +e
 tr -d '\r' < "$CSV" \
