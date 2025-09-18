@@ -43,8 +43,15 @@ for cmd in csvcut csvgrep csvformat; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: $cmd not found. Please install csvkit (<1.0.5)." >&2; exit 1; }
 done
 
-# Check required columns exist from header (normalize CR)
+# Detect delimiter from the header (tab → use -t, else assume comma)
 header="$(head -n1 "$CSV" | tr -d '\r' || true)"
+CSV_DOPT=""
+case "$header" in
+  *$'\t'*) CSV_DOPT="-t" ;;   # TSV
+  *) CSV_DOPT="" ;;           # CSV (default)
+esac
+
+# Check required columns exist (string check is fine for both CSV/TSV)
 missing=0
 for col in ingredients_text product_name code; do
   case "$header" in *"$col"*) : ;; *) missing=1 ;; esac
@@ -56,13 +63,13 @@ if [ $missing -eq 1 ]; then
   exit 0
 fi
 
-# Core pipeline (TSV throughout); add placeholders using pure Bash
+# Core pipeline: parse with detected delimiter; always output TSV; add placeholders
 tmp_matches="$(mktemp)"
 set +e
 tr -d '\r' < "$CSV" \
-| csvcut   -t -c ingredients_text,product_name,code \
-| csvgrep  -t -c ingredients_text -r "(?i)${INGREDIENT}" \
-| csvcut   -t -c product_name,code \
+| csvcut   $CSV_DOPT -c ingredients_text,product_name,code \
+| csvgrep  $CSV_DOPT -c ingredients_text -r "(?i)${INGREDIENT}" \
+| csvcut   $CSV_DOPT -c product_name,code \
 | csvformat -T \
 | tail -n +2 \
 | while IFS=$'\t' read -r name code; do
