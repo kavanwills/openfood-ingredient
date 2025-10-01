@@ -1,96 +1,45 @@
 #!/usr/bin/env bash
-# find_ingredient.sh
 # Usage: ./find_ingredient.sh -i "<ingredient>" -d /path/to/folder
-# Output: product_name<TAB>code per match, then: Found N product(s) containing: "<INGREDIENT>"
-
-set -euo pipefail
-export CSVKIT_FIELD_SIZE_LIMIT=$((1024 * 1024 * 1024))
-
-INGREDIENT=""
-DATA_DIR=""
-
+# Input: products.csv (TSV) must exist inside the folder.
+# Output: product_name<TAB>code for matches, then a final count line.
+set -euo pipefail # safer Bash: fail on errors/unset vars/pipelines
+# Allow up to 1 GB per field
+INGREDIENT=""; DATA_DIR=""; CSV=""
 usage() {
-  echo "Usage: $0 -i \"<ingredient>\" -d /path/to/folder"
-  echo "  -i   ingredient to search (case-insensitive)"
-  echo "  -d   folder containing products.csv (tab-separated)"
-  echo "  -h   show help"
+echo "Usage: $0 -i \"<ingredient>\" -d /path/to/folder"
+echo " -i ingredient to search (case-insensitive)"
+echo " -d folder containing products.csv (tab-separated)"
+echo " -h show help"
 }
-
+# Parse flags (getopts)
 while getopts ":i:d:h" opt; do
-  case "$opt" in
-    i) INGREDIENT="$OPTARG" ;;
-    d) DATA_DIR="$OPTARG" ;;
-    h) usage; exit 0 ;;
-    *) usage; exit 1 ;;
-  esac
+case "$opt" in
+i) INGREDIENT="$OPTARG" ;;
+d) DATA_DIR="$OPTARG" ;;
+h) usage; exit 0 ;;
+*) usage; exit 1 ;;
+esac
 done
-
+# Validate inputs
 [ -z "${INGREDIENT:-}" ] && { echo "ERROR: -i <ingredient> is required" >&2; usage; exit 1; }
 [ -z "${DATA_DIR:-}" ] && { echo "ERROR: -d /path/to/folder is required" >&2; usage; exit 1; }
-
 CSV="$DATA_DIR/products.csv"
-
-# Graceful: missing/empty file → 0 results
-if [ ! -s "$CSV" ]; then
-  echo "ERROR: $CSV not found or empty." >&2
-  echo "----"
-  echo "Found 0 product(s) containing: \"${INGREDIENT}\""
-  exit 0
-fi
-
-# Require csvkit tools (csvkit <1.0.5 recommended)
-for cmd in in2csv csvcut csvgrep csvformat; do
-  command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: $cmd not found. Please install csvkit (<1.0.5)." >&2; exit 1; }
+[ -s "$CSV" ] || { echo "ERROR: $CSV not found or empty." >&2; exit 1; }
+# Check csvkit tools
+for cmd in csvcut csvgrep csvformat; do
+command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: $cmd not found. Please install csvkit." >&2; exit
+1; }
 done
-
-# Normalize and inspect parsed header (in2csv auto-detects delimiter)
-parsed_header="$(tr -d '\r' < "$CSV" | in2csv | head -n1 || true)"
-
-# Check required columns exist after parsing
-missing=0
-for col in ingredients_text product_name code; do
-  case "$parsed_header" in *"$col"*) : ;; *) missing=1 ;; esac
-done
-if [ $missing -eq 1 ]; then
-  echo "WARNING: Missing required column(s)." >&2
-  echo "----"
-  echo "Found 0 product(s) containing: \"${INGREDIENT}\""
-  exit 0
-fi
-
-# Core pipeline:
-# tr -d '\r'  -> strip CRs
-# in2csv      -> canonical CSV (auto-delimiter)
-# csvcut/grep -> select/filter
-# csvformat -T -> TSV output
-# tail -n +2  -> drop header
-# while       -> fill placeholders
+# Pipeline:
 tmp_matches="$(mktemp)"
-set +e
-tr -d '\r' < "$CSV" \
-| in2csv \
-| csvcut   -c ingredients_text,product_name,code \
-| csvgrep  -c ingredients_text -r "(?i)${INGREDIENT}" \
-| csvcut   -c product_name,code \
+csvcut -t -c ingredients_text,product_name,code "$CSV" \
+| csvgrep -c ingredients_text -r "(?i)${INGREDIENT}" \
+| csvcut -c product_name,code \
 | csvformat -T \
 | tail -n +2 \
-| while IFS=$'\t' read -r name code; do
-    [ -z "$name" ] && name="<missing_name>"
-    [ -z "$code" ] && code="<missing_code>"
-    printf "%s\t%s\n" "$name" "$code"
-  done \
 | tee "$tmp_matches"
-status=$?
-set -e
-
-if [ $status -ne 0 ]; then
-  echo "ERROR: Filtering pipeline failed." >&2
-  rm -f "$tmp_matches"
-  exit $status
-fi
-
-count="$(wc -l < "$tmp_matches" | tr -d '[:space:]')"
+count="$(wc -l < "$tmp_matches" | tr -d ' ')"
 echo "----"
 echo "Found ${count} product(s) containing: \"${INGREDIENT}\""
-
+# cleanup
 rm -f "$tmp_matches"
